@@ -109,31 +109,50 @@ class SmartNewsBot:
         return hashlib.md5(f"{title}{link}".encode()).hexdigest()
 
     def check_banned_organizations(self, title, text):
-        """Проверка новости на упоминание запрещенных организаций"""
+        """Улучшенная проверка новости на упоминание запрещенных организаций"""
         content = f"{title} {text}".lower()
         
         found_organizations = []
         
-        # Проверяем полные названия организаций
+        # Проверяем полные названия организаций (только целые слова)
         for org in banned_organizations.BANNED_ORGANIZATIONS:
-            if org.lower() in content:
+            # Используем границы слов для точного совпадения
+            pattern = r'\b' + re.escape(org.lower()) + r'\b'
+            if re.search(pattern, content):
                 found_organizations.append(org)
         
-        # Проверяем по ключевым словам
+        # Улучшенная проверка по ключевым словам
         for keyword in banned_organizations.BANNED_KEYWORDS:
-            if keyword in content:
-                # Ищем контекст ключевого слова
-                start = max(0, content.find(keyword) - 50)
-                end = min(len(content), content.find(keyword) + len(keyword) + 50)
-                context = content[start:end]
-                
-                # Извлекаем возможное название организации из контекста
-                words = context.split()
-                if len(words) > 2:
-                    potential_org = ' '.join(words[:min(5, len(words))])
-                    found_organizations.append(f"контекст: {potential_org}...")
+            # Ищем только целые слова
+            pattern = r'\b' + re.escape(keyword) + r'\b'
+            if re.search(pattern, content):
+                # Получаем более точный контекст
+                matches = re.finditer(pattern, content)
+                for match in matches:
+                    start = max(0, match.start() - 30)
+                    end = min(len(content), match.end() + 30)
+                    context = content[start:end]
+                    
+                    # Фильтруем ложные срабатывания
+                    if len(keyword) > 2:  # Игнорируем слишком короткие слова
+                        # Проверяем, что это не часть другого слова
+                        words_in_context = re.findall(r'\b\w+\b', context)
+                        if any(keyword == word.lower() for word in words_in_context):
+                            found_organizations.append(f"ключевое слово: '{keyword}' в контексте: ...{context}...")
         
-        return found_organizations
+        # Дополнительная проверка: игнорируем слишком короткие слова (менее 3 символов)
+        # если они не являются частью запрещенных организаций
+        filtered_organizations = []
+        for org in found_organizations:
+            if "ключевое слово:" in org:
+                # Извлекаем ключевое слово из строки
+                match = re.search(r"ключевое слово: '([^']*)'", org)
+                if match and len(match.group(1)) < 3:
+                    logger.info(f"🔍 Игнорируем короткое ключевое слово: '{match.group(1)}'")
+                    continue
+            filtered_organizations.append(org)
+        
+        return filtered_organizations
 
     def format_news_message(self, news_item):
         """Форматирование сообщения для публикации БЕЗ источника и хештегов"""
